@@ -1,0 +1,22 @@
+[project]
+name = "casper-transfer"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "connorbell133",email = "connor@connorbell.dev"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi (>=0.104.1)",
+    "uvicorn (>=0.24.0)",
+    "pydantic-settings (>=2.0.0)",
+    "google-cloud-aiplatform (>=1.44.0)",
+    "python-multipart (>=0.0.6)",
+    "google-genai (>=1.25.0,<2.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
