@@ -1,150 +1,163 @@
-# Asynchronous Gemini Chatbot
+# Async-Agent Example: Conversational AI with Background Tool Execution
 
-A proof-of-concept chatbot that demonstrates asynchronous tool execution with Google's Gemini AI, allowing the user to continue interacting with the chatbot while long-running tasks are processed in the background.
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-brightgreen)
+![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-## Features
+> A proof-of-concept showing how an AI assistant can keep the conversation flowing while running long-lived tasks in the background — and then *proactively* weave the results back into the chat when they are ready.
 
-- FastAPI-based HTTP API for chat interactions
-- Google Gemini AI integration for natural language understanding
-- Tool calling capabilities for extending chatbot functionality
-- Asynchronous task queuing and execution system
-- In-memory conversation state management
-- Periodic task monitoring
-- Result re-integration into ongoing conversations
+---
 
-## Project Structure
+## ✨ Why this project?
 
+Large-language-model (LLM) agents are great at answering questions *now*, but real world workflows often require them to:
+
+1. Recognise **when** to call an external tool (API, DB query, scraper, …).
+2. Wait minutes (or hours) for the result.
+3. Keep chatting naturally in the meantime.
+4. Seamlessly introduce the answer later *without repeating themselves*.
+
+This repository demonstrates exactly that using:
+
+* **Google Gemini** via the beta GenAI SDK
+* **FastAPI** for the HTTP interface
+* A tiny **task queue / worker** implemented with nothing but `asyncio`
+* An example **weather tool** that simulates a 15-second API call
+* Extensive **pytest** scripts that verify the behaviour end-to-end
+
+---
+
+## 🏗️  High-level architecture
+
+```mermaid
+graph TD
+  subgraph FastAPI Service
+    A([/api/chat]) -->|User messages| B(Chat Router)
+    B -->|Calls| C(GeminiService)
+    B -->|Enqueue AsyncTask| D(TaskManager)
+    D -->|Background Worker| E(Weather Tool ⏳)
+    F[Task Monitor] --> D
+  end
+  E -->|Result stored| D
+  D -->|Completed task surfaced\n as system prompt| C
+  C -->|Proactive reply| B
+  B -->|JSON response| A
 ```
-.
-├── app/                           # Main application package
-│   ├── core/                      # Core functionality
-│   │   └── config.py              # Application settings
-│   ├── models/                    # Pydantic data models
-│   │   └── chat.py                # Chat-related data models
-│   ├── routers/                   # API route definitions
-│   │   └── chat.py                # Chat-related endpoints
-│   ├── services/                  # Business logic services
-│   │   ├── gemini.py              # Gemini API service
-│   │   └── task_manager.py        # Async task management
-│   └── tools/                     # Tool implementations
-│       └── weather.py             # Weather tool (with delay)
-├── Dockerfile                     # Container definition
-├── docker-compose.yml             # Docker Compose configuration
-├── requirements.txt               # Python dependencies
-├── run.py                         # Script to run the application
-├── test_chatbot.py                # Test script for the chatbot
-└── .env.example                   # Example environment variables
-```
 
-## Requirements
+* **Chat Router:** handles incoming messages, keeps an in-memory chat history per user and detects tool calls.
+* **GeminiService:** wraps the GenAI SDK — converting chat history & tool definitions into the format Gemini expects and parsing responses (including function-call requests).
+* **TaskManager:** lightweight queue + worker. Long-running tools are executed in the background; results are persisted in memory.
+* **Task Monitor:** periodic coroutine that logs metrics and makes sure the worker stays alive.
+* **Weather Tool:** a dummy function that sleeps for 15 s and then returns a hard-coded forecast.
 
-- Python 3.8+
-- Google Gemini API key
+When Gemini returns a `get_delayed_weather` tool call the router immediately acknowledges the user (“I’m fetching the weather…”) and lets them keep chatting. Once the worker finishes, the result is injected back into the conversation as a *system* message so the next Gemini response can naturally mention it using phrases like “By the way, regarding the weather you asked about earlier…”.
 
-## Setup
+---
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd long-form-agent
-   ```
+## 🚀 Quickstart
 
-2. Create a virtual environment and install dependencies:
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-
-3. Configure environment variables:
-   ```bash
-   cp .env.example .env
-   # Edit .env file to add your Google API key
-   ```
-
-## Running the Application
-
-### Local Development
-
-Start the application with:
+### 1. Clone & install
 
 ```bash
-python run.py
-```
+# Using Poetry (recommended)
+poetry install
+poetry run uvicorn app.main:app --reload
 
-Or using uvicorn directly:
-
-```bash
+# or plain venv + pip
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-### Using Docker
+Environment variables can be placed in a `.env` file (see `.env.example`). You *must* provide `GOOGLE_API_KEY` for Gemini.
 
-Build and start the container:
-
-```bash
-docker-compose up --build
-```
-
-## Testing
-
-You can test the chatbot using the provided test script:
+### 2. Talk to the bot
 
 ```bash
-python test_chatbot.py
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "my-user", "message": "Hello, can you get me the weather for London?"}'
 ```
 
-This script runs through a conversation flow that tests the asynchronous task execution and result re-integration.
+Open `http://localhost:8000/docs` for the interactive Swagger UI.
 
-## API Endpoints
+### 3. Run the demo test
 
-- `GET /health`: Health check endpoint
-- `POST /api/chat`: Chat endpoint for sending messages to the chatbot
-
-### Chat Endpoint
-
-Request:
-```json
-{
-  "user_id": "user-123",
-  "message": "What's the weather like in London?"
-}
+```bash
+python test_proactive_results.py
 ```
 
-Response:
-```json
-{
-  "response": "I'm fetching the weather for London. This might take about 15 seconds. Feel free to ask me anything else in the meantime!"
-}
+You should see output similar to the transcript in the repository description.
+
+---
+
+## 🧪 Running the full test suite
+
+```bash
+pytest -q
 ```
 
-## Flow Demonstration
+All tests are asynchronous ‑ they spin up the FastAPI app, simulate a conversation, and assert that:
 
-1. User asks for weather in London
-2. Chatbot acknowledges and starts the long-running task
-3. User can continue asking other questions
-4. When the weather task completes, the result is added to the conversation history
-5. Chatbot incorporates the weather result in subsequent responses
+* normal questions are answered immediately;
+* Gemini requests the weather tool;
+* the assistant does **not** block while the 15 s task runs;
+* once the task completes, the result is mentioned exactly once.
 
-## Design Considerations
+---
 
-- **In-memory State**: For simplicity, all state is stored in memory without persistence
-- **Task Queuing**: Tasks are queued and executed asynchronously
-- **Periodic Monitoring**: Background tasks periodically monitor task status
-- **Result Re-integration**: When tasks complete, their results are added to the conversation history
+## 📂 Project layout
 
-## Limitations
+```
+async-agent-example/
+├─ app/
+│  ├─ core/            → settings & constants
+│  ├─ models/          → Pydantic schemas
+│  ├─ routers/         → FastAPI endpoints
+│  ├─ services/        → Gemini wrapper + task manager
+│  └─ tools/           → external tool interfaces
+├─ tests/              → pytest cases (see *test_*.py*)
+├─ run.py              → convenience startup script
+└─ README.md           → you are here 😊
+```
 
-- No persistent storage
-- Limited error handling
-- No authentication/authorization
-- Single instance only (no distributed task queue)
-- No real-time updates (client must poll for results)
+---
 
-## Future Enhancements
+## 🔒 Limitations & next steps
 
-- Add persistent storage for conversations and tasks
-- Implement more sophisticated error handling and retries
-- Add WebSockets for real-time updates
-- Implement distributed task queue for scalability
-- Add more tools and tool types
+* **In-memory storage** — swap in Redis or a real queue (RQ, Celery, Sidekiq-py) for production.
+* **Single process** — no horizontal scaling yet.
+* **Error handling** is minimal.
+* **Streaming responses** / WebSockets would make the UX even smoother.
+
+Pull requests are very welcome! 🙌
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repo & create a branch (`feat/my-awesome-feature`).
+2. Run `pre-commit install` to enable hooks.
+3. Add your changes & tests.
+4. Ensure `pytest` and `ruff` pass.
+5. Open a PR — please describe *why* as well as *what*.
+
+All contributors agree to abide by the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
+
+---
+
+## 📝 License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+## 🙏 Acknowledgements
+
+* [FastAPI](https://fastapi.tiangolo.com/)
+* [Google GenAI SDK](https://ai.google.dev/)
+* Inspiration from the OpenAI function-calling examples and the community discussion around *agents that don’t block the user experience*.
+
+---
+
+Happy hacking! ✨
