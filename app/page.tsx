@@ -3,25 +3,27 @@
 import { useChat } from '@ai-sdk/react';
 import { AsyncTaskAgentMessage } from '@/agent/async-task-agent';
 import ChatInput from '@/components/chat-input';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
-export default function ChatAsyncTasks() {
-  const [userId] = useState(() => {
-    // Generate or retrieve user ID (in production, this would come from auth)
-    if (typeof window !== 'undefined') {
-      const stored = localStorage.getItem('async-chat-user-id');
-      if (stored) return stored;
+export default function Home() {
+  const [userId, setUserId] = useState('anonymous');
+
+  // Initialize userId on client side only
+  useEffect(() => {
+    const stored = localStorage.getItem('async-chat-user-id');
+    if (stored) {
+      setUserId(stored);
+    } else {
       const newId = crypto.randomUUID();
       localStorage.setItem('async-chat-user-id', newId);
-      return newId;
+      setUserId(newId);
     }
-    return 'anonymous';
-  });
+  }, []);
 
   const { error, status, sendMessage, messages, regenerate, stop } = useChat<
     AsyncTaskAgentMessage
   >({
-    api: '/api/chat-async-tasks',
+    api: '/api/chat',
     body: {
       userId,
     },
@@ -110,4 +112,3 @@ export default function ChatAsyncTasks() {
     </div>
   );
 }
-
