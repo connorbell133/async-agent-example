@@ -41,7 +41,7 @@ class InMemoryAsyncTaskStorage implements AsyncTaskStorage {
   clear(userId?: string): void {
     if (userId) {
       // Clear only tasks for a specific user
-      for (const [taskId, task] of this.tasks.entries()) {
+      for (const [taskId, task] of Array.from(this.tasks.entries())) {
         if (task.userId === userId) {
           this.tasks.delete(taskId);
         }
@@ -87,6 +87,7 @@ export function storeCompletedTask(
     toolName,
     parameters,
     result,
+    processed: false,
   });
 }
 

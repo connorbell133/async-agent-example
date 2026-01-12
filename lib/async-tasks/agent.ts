@@ -11,15 +11,19 @@ import {
   ToolLoopAgent,
   type Agent,
   type ToolSet,
-  type Output,
-  type CoreTool,
+  type Tool,
   type GenerateTextResult,
   type StreamTextResult,
+  type FlexibleSchema,
 } from 'ai';
 import { z } from 'zod';
 import { createAsyncTool } from './wrapper';
 import { createAsyncTaskPrepareCall } from './adapter';
 import type { AsyncTask } from './types';
+
+// Extract Output type from ToolLoopAgentSettings using ConstructorParameters
+type ToolLoopAgentSettingsType = ConstructorParameters<typeof ToolLoopAgent>[0];
+type OutputType = ToolLoopAgentSettingsType extends { output?: infer O } ? O : never;
 
 /**
  * Configuration for an async tool.
@@ -28,7 +32,7 @@ export interface AsyncToolConfig {
   /**
    * The original tool to wrap for async execution.
    */
-  tool: CoreTool;
+  tool: Tool;
   /**
    * Optional custom message to return immediately when the tool is triggered.
    * Receives the tool parameters as input.
@@ -61,7 +65,7 @@ export interface ToolLoopAgentAsyncSettings<
   CALL_OPTIONS extends AsyncAgentCallOptions = AsyncAgentCallOptions,
   TOOLS extends ToolSet = ToolSet,
   ASYNC_TOOLS extends Record<string, AsyncToolConfig> = Record<string, AsyncToolConfig>,
-  OUTPUT extends Output = never,
+  OUTPUT extends OutputType = never,
 > {
   /**
    * The id of the agent.
@@ -76,7 +80,7 @@ export interface ToolLoopAgentAsyncSettings<
   /**
    * The language model to use.
    */
-  model: Parameters<typeof ToolLoopAgent>[0]['model'];
+  model: ConstructorParameters<typeof ToolLoopAgent>[0]['model'];
 
   /**
    * Regular (synchronous) tools that the agent can use.
@@ -92,7 +96,7 @@ export interface ToolLoopAgentAsyncSettings<
   /**
    * The schema for call options. Must extend AsyncAgentCallOptions.
    */
-  callOptionsSchema?: z.ZodType<CALL_OPTIONS>;
+  callOptionsSchema?: FlexibleSchema<CALL_OPTIONS>;
 
   /**
    * Optional custom function to format task results for injection.
@@ -109,7 +113,7 @@ export interface ToolLoopAgentAsyncSettings<
    * Additional prepareCall hook to run after async task injection.
    * This allows chaining custom prepareCall logic.
    */
-  prepareCall?: Parameters<typeof ToolLoopAgent>[0]['prepareCall'];
+  prepareCall?: ConstructorParameters<typeof ToolLoopAgent>[0]['prepareCall'];
 
   /**
    * All other ToolLoopAgent settings.
@@ -123,10 +127,10 @@ export interface ToolLoopAgentAsyncSettings<
   stopSequences?: string[];
   seed?: number;
   headers?: Record<string, string>;
-  stopWhen?: Parameters<typeof ToolLoopAgent>[0]['stopWhen'];
-  onStepFinish?: Parameters<typeof ToolLoopAgent>[0]['onStepFinish'];
-  onFinish?: Parameters<typeof ToolLoopAgent>[0]['onFinish'];
-  experimental_telemetry?: Parameters<typeof ToolLoopAgent>[0]['experimental_telemetry'];
+  stopWhen?: ConstructorParameters<typeof ToolLoopAgent>[0]['stopWhen'];
+  onStepFinish?: ConstructorParameters<typeof ToolLoopAgent>[0]['onStepFinish'];
+  onFinish?: ConstructorParameters<typeof ToolLoopAgent>[0]['onFinish'];
+  experimental_telemetry?: ConstructorParameters<typeof ToolLoopAgent>[0]['experimental_telemetry'];
   experimental_context?: unknown;
 }
 
@@ -159,14 +163,14 @@ export class ToolLoopAgentAsync<
   CALL_OPTIONS extends AsyncAgentCallOptions = AsyncAgentCallOptions,
   TOOLS extends ToolSet = ToolSet,
   ASYNC_TOOLS extends Record<string, AsyncToolConfig> = Record<string, AsyncToolConfig>,
-  OUTPUT extends Output = never,
-> implements Agent<CALL_OPTIONS, TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool }, OUTPUT>
+  OUTPUT extends OutputType = never,
+> implements Agent<CALL_OPTIONS, TOOLS & { [K in keyof ASYNC_TOOLS]: Tool }, OUTPUT>
 {
   readonly version = 'agent-v1' as const;
 
   private readonly innerAgent: ToolLoopAgent<
     CALL_OPTIONS,
-    TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool },
+    TOOLS & { [K in keyof ASYNC_TOOLS]: Tool },
     OUTPUT
   >;
 
@@ -183,7 +187,7 @@ export class ToolLoopAgentAsync<
     this.settings = settings;
 
     // Convert async tools to wrapped async tools
-    const wrappedAsyncTools: Record<string, CoreTool> = {};
+    const wrappedAsyncTools: Record<string, Tool> = {};
     if (settings.asyncTools) {
       for (const [name, config] of Object.entries(settings.asyncTools)) {
         wrappedAsyncTools[name] = createAsyncTool(config.tool, {
@@ -198,7 +202,7 @@ export class ToolLoopAgentAsync<
     const allTools = {
       ...settings.tools,
       ...wrappedAsyncTools,
-    } as TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool };
+    } as TOOLS & { [K in keyof ASYNC_TOOLS]: Tool };
 
     // Create the async task prepareCall hook
     const asyncPrepareCall = createAsyncTaskPrepareCall({
@@ -233,32 +237,34 @@ export class ToolLoopAgentAsync<
       experimental_context: settings.experimental_context,
 
       // Combined prepareCall that handles async tasks and user's custom prepareCall
-      prepareCall: async ({ messages, options, ...restSettings }) => {
-        const callOptions = options as CALL_OPTIONS | undefined;
+      prepareCall: async (callParams) => {
+        const callOptions = callParams.options as CALL_OPTIONS | undefined;
         const userId = callOptions?.userId || 'anonymous';
 
         // Store userId in global storage for async tools to access
         globalThis.__currentUserId = userId;
 
         // First, apply async task injection
-        let modifiedSettings = await asyncPrepareCall({
-          messages,
-          options,
-          ...restSettings,
-        });
+        const asyncModified = await asyncPrepareCall(callParams);
 
         // Then, apply user's custom prepareCall if provided
-        if (settings.prepareCall) {
-          modifiedSettings = await settings.prepareCall({
-            messages,
-            options,
-            ...modifiedSettings,
-          } as Parameters<NonNullable<typeof settings.prepareCall>>[0]);
-        }
+        let finalSettings = settings.prepareCall
+          ? await settings.prepareCall({
+              ...callParams,
+              ...asyncModified,
+            } as Parameters<NonNullable<typeof settings.prepareCall>>[0])
+          : asyncModified;
 
-        return modifiedSettings;
+        return {
+          ...callParams,
+          ...finalSettings,
+        } as typeof callParams;
       },
-    } as Parameters<typeof ToolLoopAgent>[0]);
+    } as ConstructorParameters<typeof ToolLoopAgent>[0]) as unknown as ToolLoopAgent<
+      CALL_OPTIONS,
+      TOOLS & { [K in keyof ASYNC_TOOLS]: Tool },
+      OUTPUT
+    >;
   }
 
   /**
@@ -271,7 +277,7 @@ export class ToolLoopAgentAsync<
   /**
    * The tools that the agent can use (both regular and async).
    */
-  get tools(): TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool } {
+  get tools(): TOOLS & { [K in keyof ASYNC_TOOLS]: Tool } {
     return this.innerAgent.tools;
   }
 
@@ -287,7 +293,7 @@ export class ToolLoopAgentAsync<
    */
   generate(
     options: Parameters<typeof this.innerAgent.generate>[0],
-  ): Promise<GenerateTextResult<TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool }, OUTPUT>> {
+  ): Promise<GenerateTextResult<TOOLS & { [K in keyof ASYNC_TOOLS]: Tool }, OUTPUT>> {
     return this.innerAgent.generate(options);
   }
 
@@ -296,7 +302,7 @@ export class ToolLoopAgentAsync<
    */
   stream(
     options: Parameters<typeof this.innerAgent.stream>[0],
-  ): Promise<StreamTextResult<TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool }, OUTPUT>> {
+  ): Promise<StreamTextResult<TOOLS & { [K in keyof ASYNC_TOOLS]: Tool }, OUTPUT>> {
     return this.innerAgent.stream(options);
   }
 }
@@ -307,6 +313,6 @@ export class ToolLoopAgentAsync<
 export type InferAsyncAgentUIMessage<
   AGENT extends ToolLoopAgentAsync<any, any, any, any>,
 > = AGENT extends ToolLoopAgentAsync<infer _CO, infer TOOLS, infer ASYNC_TOOLS, any>
-  ? import('ai').UIMessage<unknown, never, import('ai').InferUITools<TOOLS & { [K in keyof ASYNC_TOOLS]: CoreTool }>>
+  ? import('ai').UIMessage<unknown, never, import('ai').InferUITools<TOOLS & { [K in keyof ASYNC_TOOLS]: Tool }>>
   : never;
 

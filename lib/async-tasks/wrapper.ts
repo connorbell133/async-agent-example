@@ -3,7 +3,7 @@
  * Converts any AI SDK tool into an async tool that executes in the background.
  */
 
-import { tool, type CoreTool } from 'ai';
+import { tool, type Tool } from 'ai';
 import type { AsyncTaskWrapperOptions } from './types';
 import { storeCompletedTask } from './core';
 
@@ -15,7 +15,7 @@ import { storeCompletedTask } from './core';
  * @param options - Configuration options for the async wrapper
  * @returns A new tool that executes the original tool asynchronously
  */
-export function createAsyncTool<T extends CoreTool>(
+export function createAsyncTool<T extends Tool>(
   originalTool: T,
   options: AsyncTaskWrapperOptions,
 ): T {
@@ -29,12 +29,13 @@ export function createAsyncTool<T extends CoreTool>(
       const userId = getUserId();
 
       // Execute the original tool in the background
-      if (originalTool.execute) {
+      const executeFn = originalTool.execute;
+      if (executeFn) {
         // Fire and forget - execute in background
         (async () => {
           try {
             // Execute the original tool (potentially long-running)
-            const result = await originalTool.execute(params, context);
+            const result = await executeFn(params, context);
             // Store the completed task result for later retrieval
             const taskId = storeCompletedTask(
               userId,

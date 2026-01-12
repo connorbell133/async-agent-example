@@ -1,6 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
+import { DefaultChatTransport } from 'ai';
 import { AsyncTaskAgentMessage } from '@/agent/async-task-agent';
 import ChatInput from '@/components/chat-input';
 import { useState, useEffect } from 'react';
@@ -23,10 +24,12 @@ export default function Home() {
   const { error, status, sendMessage, messages, regenerate, stop } = useChat<
     AsyncTaskAgentMessage
   >({
-    api: '/api/chat',
-    body: {
-      userId,
-    },
+    transport: new DefaultChatTransport({
+      api: '/api/chat',
+      body: {
+        userId,
+      },
+    }),
   });
 
   return (
@@ -45,11 +48,10 @@ export default function Home() {
         {messages.map(m => (
           <div
             key={m.id}
-            className={`p-4 rounded-lg ${
-              m.role === 'user'
-                ? 'bg-blue-100 ml-auto max-w-[80%]'
-                : 'bg-gray-100 mr-auto max-w-[80%]'
-            }`}
+            className={`p-4 rounded-lg ${m.role === 'user'
+              ? 'bg-blue-100 ml-auto max-w-[80%]'
+              : 'bg-gray-100 mr-auto max-w-[80%]'
+              }`}
           >
             <div className="font-semibold mb-1">
               {m.role === 'user' ? 'You' : 'Assistant'}
@@ -59,17 +61,17 @@ export default function Home() {
                 if (part.type === 'text') {
                   return <div key={idx}>{part.text}</div>;
                 }
-                if (part.type === 'tool-call') {
+                if (part.type === 'tool-call' && 'toolName' in part) {
                   return (
                     <div key={idx} className="mt-2 p-2 bg-yellow-100 rounded text-sm">
-                      🔧 Calling tool: {part.toolName}
+                      🔧 Calling tool: {String(part.toolName)}
                     </div>
                   );
                 }
-                if (part.type === 'tool-result') {
+                if (part.type === 'tool-result' && 'output' in part) {
                   return (
                     <div key={idx} className="mt-2 p-2 bg-green-100 rounded text-sm">
-                      ✅ Tool result: {String(part.result)}
+                      ✅ Tool result: {String(part.output)}
                     </div>
                   );
                 }
