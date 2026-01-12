@@ -1,163 +1,43 @@
-# Async-Agent Example: Conversational AI with Background Tool Execution
+# AI SDK, Next.js, and OpenAI Chat Example
 
-![Python](https://img.shields.io/badge/python-3.10%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-brightgreen)
-![License](https://img.shields.io/badge/license-MIT-lightgrey)
+This example shows how to use the [AI SDK](https://ai-sdk.dev/docs) with [Next.js](https://nextjs.org/) and [OpenAI](https://openai.com) to create a ChatGPT-like AI-powered streaming chat bot.
 
-> A proof-of-concept showing how an AI assistant can keep the conversation flowing while running long-lived tasks in the background — and then *proactively* weave the results back into the chat when they are ready.
+## Deploy your own
 
----
+Deploy the example using [Vercel](https://vercel.com?utm_source=github&utm_medium=readme&utm_campaign=ai-sdk-example):
 
-## ✨ Why this project?
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fvercel%2Fai%2Ftree%2Fmain%2Fexamples%2Fnext-openai&env=OPENAI_API_KEY&project-name=ai-sdk-next-openai&repository-name=ai-sdk-next-openai)
 
-Large-language-model (LLM) agents are great at answering questions *now*, but real world workflows often require them to:
+## How to use
 
-1. Recognise **when** to call an external tool (API, DB query, scraper, …).
-2. Wait minutes (or hours) for the result.
-3. Keep chatting naturally in the meantime.
-4. Seamlessly introduce the answer later *without repeating themselves*.
-
-This repository demonstrates exactly that using:
-
-* **Google Gemini** via the beta GenAI SDK
-* **FastAPI** for the HTTP interface
-* A tiny **task queue / worker** implemented with nothing but `asyncio`
-* An example **weather tool** that simulates a 15-second API call
-* Extensive **pytest** scripts that verify the behaviour end-to-end
-
----
-
-## 🏗️  High-level architecture
-
-```mermaid
-graph TD
-  subgraph FastAPI Service
-    A([/api/chat]) -->|User messages| B(Chat Router)
-    B -->|Calls| C(GeminiService)
-    B -->|Enqueue AsyncTask| D(TaskManager)
-    D -->|Background Worker| E(Weather Tool ⏳)
-    F[Task Monitor] --> D
-  end
-  E -->|Result stored| D
-  D -->|Completed task surfaced\n as system prompt| C
-  C -->|Proactive reply| B
-  B -->|JSON response| A
-```
-
-* **Chat Router:** handles incoming messages, keeps an in-memory chat history per user and detects tool calls.
-* **GeminiService:** wraps the GenAI SDK — converting chat history & tool definitions into the format Gemini expects and parsing responses (including function-call requests).
-* **TaskManager:** lightweight queue + worker. Long-running tools are executed in the background; results are persisted in memory.
-* **Task Monitor:** periodic coroutine that logs metrics and makes sure the worker stays alive.
-* **Weather Tool:** a dummy function that sleeps for 15 s and then returns a hard-coded forecast.
-
-When Gemini returns a `get_delayed_weather` tool call the router immediately acknowledges the user (“I’m fetching the weather…”) and lets them keep chatting. Once the worker finishes, the result is injected back into the conversation as a *system* message so the next Gemini response can naturally mention it using phrases like “By the way, regarding the weather you asked about earlier…”.
-
----
-
-## 🚀 Quickstart
-
-### 1. Clone & install
+Execute [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app) with [npm](https://docs.npmjs.com/cli/init), [Yarn](https://yarnpkg.com/lang/en/docs/cli/create/), or [pnpm](https://pnpm.io) to bootstrap the example:
 
 ```bash
-# Using Poetry (recommended)
-poetry install
-poetry run uvicorn app.main:app --reload
-
-# or plain venv + pip
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+npx create-next-app --example https://github.com/vercel/ai/tree/main/examples/next-openai next-openai-app
 ```
-
-Environment variables can be placed in a `.env` file (see `.env.example`). You *must* provide `GOOGLE_API_KEY` for Gemini.
-
-### 2. Talk to the bot
 
 ```bash
-curl -X POST http://localhost:8000/api/chat \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": "my-user", "message": "Hello, can you get me the weather for London?"}'
+yarn create next-app --example https://github.com/vercel/ai/tree/main/examples/next-openai next-openai-app
 ```
-
-Open `http://localhost:8000/docs` for the interactive Swagger UI.
-
-### 3. Run the demo test
 
 ```bash
-python test_proactive_results.py
+pnpm create next-app --example https://github.com/vercel/ai/tree/main/examples/next-openai next-openai-app
 ```
 
-You should see output similar to the transcript in the repository description.
+To run the example locally you need to:
 
----
+1. Sign up at [OpenAI's Developer Platform](https://platform.openai.com/signup).
+2. Go to [OpenAI's dashboard](https://platform.openai.com/account/api-keys) and create an API KEY.
+3. If you choose to use external files for attachments, then create a [Vercel Blob Store](https://vercel.com/docs/storage/vercel-blob).
+4. Set the required environment variable as the token value as shown [the example env file](./.env.local.example) but in a new file called `.env.local`
+5. `pnpm install` to install the required dependencies.
+6. `pnpm dev` to launch the development server.
 
-## 🧪 Running the full test suite
+## Learn More
 
-```bash
-pytest -q
-```
+To learn more about OpenAI, Next.js, and the AI SDK take a look at the following resources:
 
-All tests are asynchronous ‑ they spin up the FastAPI app, simulate a conversation, and assert that:
-
-* normal questions are answered immediately;
-* Gemini requests the weather tool;
-* the assistant does **not** block while the 15 s task runs;
-* once the task completes, the result is mentioned exactly once.
-
----
-
-## 📂 Project layout
-
-```
-async-agent-example/
-├─ app/
-│  ├─ core/            → settings & constants
-│  ├─ models/          → Pydantic schemas
-│  ├─ routers/         → FastAPI endpoints
-│  ├─ services/        → Gemini wrapper + task manager
-│  └─ tools/           → external tool interfaces
-├─ tests/              → pytest cases (see *test_*.py*)
-├─ run.py              → convenience startup script
-└─ README.md           → you are here 😊
-```
-
----
-
-## 🔒 Limitations & next steps
-
-* **In-memory storage** — swap in Redis or a real queue (RQ, Celery, Sidekiq-py) for production.
-* **Single process** — no horizontal scaling yet.
-* **Error handling** is minimal.
-* **Streaming responses** / WebSockets would make the UX even smoother.
-
-Pull requests are very welcome! 🙌
-
----
-
-## 🤝 Contributing
-
-1. Fork the repo & create a branch (`feat/my-awesome-feature`).
-2. Run `pre-commit install` to enable hooks.
-3. Add your changes & tests.
-4. Ensure `pytest` and `ruff` pass.
-5. Open a PR — please describe *why* as well as *what*.
-
-All contributors agree to abide by the [Contributor Covenant](https://www.contributor-covenant.org/version/2/1/code_of_conduct/).
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgements
-
-* [FastAPI](https://fastapi.tiangolo.com/)
-* [Google GenAI SDK](https://ai.google.dev/)
-* Inspiration from the OpenAI function-calling examples and the community discussion around *agents that don’t block the user experience*.
-
----
-
-Happy hacking! ✨
+- [AI SDK docs](https://ai-sdk.dev/docs)
+- [Vercel AI Playground](https://ai-sdk.dev/playground)
+- [OpenAI Documentation](https://platform.openai.com/docs) - learn about OpenAI features and API.
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
