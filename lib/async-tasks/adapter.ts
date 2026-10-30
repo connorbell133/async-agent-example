@@ -6,6 +6,17 @@
 import type { AsyncTaskAdapterConfig, AsyncTask } from './types';
 import { getCompletedTasks, markTaskProcessed } from './core';
 
+// Pending deliveries are scoped by execution identity. The agent onFinish hook
+// acknowledges them after generation completes.
+const pendingDeliveries = new Map<string, Set<string>>();
+export function acknowledgeDeliveredTasks(userId: string): void {
+  const ids = pendingDeliveries.get(userId);
+  if (!ids) return;
+  for (const id of ids) markTaskProcessed(id);
+  pendingDeliveries.delete(userId);
+}
+
+
 /**
  * Default formatter for task results.
  */
@@ -58,10 +69,10 @@ export function createAsyncTaskPrepareCall<T extends { instructions?: string }>(
       // Format task results
       const formattedResults = formatTaskResults(completedTasks);
 
-      // Mark all tasks as processed
-      for (const task of completedTasks) {
-        markTaskProcessed(task.taskId);
-      }
+      // Stage delivery; do not remove facts before the agent completes.
+      const pending = pendingDeliveries.get(userId) || new Set<string>();
+      for (const task of completedTasks) pending.add(task.taskId);
+      pendingDeliveries.set(userId, pending);
 
       // Inject task results into instructions
       const taskMentionContent = instructionsTemplate.replace(

@@ -4,6 +4,8 @@
  */
 
 import type { AsyncTask, AsyncTaskStorage } from './types';
+import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 /**
  * In-memory storage implementation for async tasks.
@@ -115,3 +117,40 @@ export function clearTasks(userId?: string): void {
 // Re-export types
 export type { AsyncTask, AsyncTaskStorage };
 
+
+/** Durable, single-process JSON-file storage for local development and self-hosting.
+ * Atomic file replacement survives process restarts. Not safe for multi-process
+ * writers or distributed deployments; use an external transactional backend there.
+ */
+export class FileAsyncTaskStorage implements AsyncTaskStorage {
+  private tasks: Map<string, AsyncTask>;
+  constructor(private readonly path: string) {
+    const records = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) as AsyncTask[] : [];
+    this.tasks = new Map(records.map(task => [task.taskId, task]));
+  }
+  private persist(): void {
+    mkdirSync(dirname(this.path), { recursive: true });
+    const tmp = this.path + '.' + crypto.randomUUID() + '.tmp';
+    writeFileSync(tmp, JSON.stringify([...this.tasks.values()]));
+    renameSync(tmp, this.path);
+  }
+  store(task: Omit<AsyncTask, 'taskId' | 'createdAt' | 'completedAt'>): string {
+    const taskId = crypto.randomUUID();
+    this.tasks.set(taskId, { ...task, taskId, createdAt: Date.now(), completedAt: Date.now(), processed: false });
+    this.persist();
+    return taskId;
+  }
+  getUnprocessed(userId: string): AsyncTask[] {
+    return [...this.tasks.values()].filter(t => t.userId === userId && !t.processed);
+  }
+  markProcessed(taskId: string): void {
+    const task = this.tasks.get(taskId);
+    if (task && !task.processed) { task.processed = true; this.persist(); }
+  }
+  clear(userId?: string): void {
+    if (userId) {
+      for (const [id, task] of this.tasks) if (task.userId === userId) this.tasks.delete(id);
+    } else this.tasks.clear();
+    this.persist();
+  }
+}

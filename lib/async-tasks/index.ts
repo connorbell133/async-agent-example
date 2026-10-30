@@ -36,6 +36,7 @@ export {
   clearTasks,
   setStorage,
   getStorage,
+  FileAsyncTaskStorage,
   type AsyncTask,
   type AsyncTaskStorage,
 } from './core';
