@@ -17,6 +17,8 @@ import {
   type FlexibleSchema,
 } from 'ai';
 import { z } from 'zod';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { acknowledgeDeliveredTasks } from './adapter';
 import { createAsyncTool } from './wrapper';
 import { createAsyncTaskPrepareCall } from './adapter';
 import type { AsyncTask } from './types';
@@ -40,13 +42,8 @@ export interface AsyncToolConfig {
   immediateResponse?: (params: Record<string, unknown>) => string;
 }
 
-/**
- * Type-safe global storage for current user ID during agent execution.
- */
-declare global {
-  // eslint-disable-next-line no-var
-  var __currentUserId: string | undefined;
-}
+/** Execution-local identity, isolated across concurrent calls. */
+const executionUser = new AsyncLocalStorage<string>();
 
 /**
  * Base call options schema that includes userId for async task support.
@@ -192,7 +189,7 @@ export class ToolLoopAgentAsync<
       for (const [name, config] of Object.entries(settings.asyncTools)) {
         wrappedAsyncTools[name] = createAsyncTool(config.tool, {
           toolName: name,
-          getUserId: () => globalThis.__currentUserId || 'anonymous',
+          getUserId: () => executionUser.getStore() || 'anonymous',
           immediateResponse: config.immediateResponse,
         });
       }
@@ -232,7 +229,11 @@ export class ToolLoopAgentAsync<
       headers: settings.headers,
       stopWhen: settings.stopWhen,
       onStepFinish: settings.onStepFinish,
-      onFinish: settings.onFinish,
+      onFinish: async (event) => {
+        // Acknowledge only after a successful agent completion, never during prepareCall.
+        acknowledgeDeliveredTasks(executionUser.getStore() || 'anonymous');
+        await settings.onFinish?.(event);
+      },
       experimental_telemetry: settings.experimental_telemetry,
       experimental_context: settings.experimental_context,
 
@@ -241,8 +242,6 @@ export class ToolLoopAgentAsync<
         const callOptions = callParams.options as CALL_OPTIONS | undefined;
         const userId = callOptions?.userId || 'anonymous';
 
-        // Store userId in global storage for async tools to access
-        globalThis.__currentUserId = userId;
 
         // First, apply async task injection
         const asyncModified = await asyncPrepareCall(callParams);
@@ -294,7 +293,8 @@ export class ToolLoopAgentAsync<
   generate(
     options: Parameters<typeof this.innerAgent.generate>[0],
   ): Promise<GenerateTextResult<TOOLS & { [K in keyof ASYNC_TOOLS]: Tool }, OUTPUT>> {
-    return this.innerAgent.generate(options);
+    const userId = (options as { options?: AsyncAgentCallOptions }).options?.userId || 'anonymous';
+    return executionUser.run(userId, () => this.innerAgent.generate(options));
   }
 
   /**
@@ -303,7 +303,8 @@ export class ToolLoopAgentAsync<
   stream(
     options: Parameters<typeof this.innerAgent.stream>[0],
   ): Promise<StreamTextResult<TOOLS & { [K in keyof ASYNC_TOOLS]: Tool }, OUTPUT>> {
-    return this.innerAgent.stream(options);
+    const userId = (options as { options?: AsyncAgentCallOptions }).options?.userId || 'anonymous';
+    return executionUser.run(userId, () => this.innerAgent.stream(options));
   }
 }
 
